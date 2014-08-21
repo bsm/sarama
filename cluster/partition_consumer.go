@@ -32,10 +32,10 @@ func (b *EventBatch) offsetIsOutOfRange() bool {
 
 // PartitionConsumer can consume a single partition of a single topic
 type PartitionConsumer struct {
-	stream    EventStream
-	topic     string
-	partition int32
-	offset    int64
+	stream      EventStream
+	topic       string
+	partitionID int32
+	offset      int64
 }
 
 // NewPartitionConsumer creates a new partition consumer instance
@@ -63,11 +63,16 @@ func NewPartitionConsumer(group *ConsumerGroup, partition int32) (*PartitionCons
 	}
 
 	return &PartitionConsumer{
-		stream:    stream,
-		topic:     group.topic,
-		partition: partition,
-		offset:    config.OffsetValue,
+		stream:      stream,
+		topic:       group.topic,
+		partitionID: partition,
+		offset:      offset,
 	}, nil
+}
+
+// Offset returns the current offset
+func (p *PartitionConsumer) Offset() int64 {
+	return p.offset
 }
 
 // Fetch returns a batch of events
@@ -81,7 +86,7 @@ func (p *PartitionConsumer) Fetch() *EventBatch {
 
 	batch := &EventBatch{
 		Topic:     p.topic,
-		Partition: p.partition,
+		Partition: p.partitionID,
 		Events:    make([]*sarama.ConsumerEvent, evtlen),
 	}
 	for i := 0; i < evtlen; i++ {

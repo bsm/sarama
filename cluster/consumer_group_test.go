@@ -166,19 +166,19 @@ var _ = Describe("ConsumerGroup", func() {
 		})
 
 		It("should checkout individual consumers", func() {
-			partition := int32(-1)
+			partitionID := int32(-1)
 			p0, _ := subject.Offset(0)
 			p1, _ := subject.Offset(1)
 
-			err := subject.Checkout(func(c *PartitionConsumer) error { partition = c.partition; return DiscardCommit })
+			err := subject.Checkout(func(c *PartitionConsumer) error { partitionID = c.partitionID; return DiscardCommit })
 			Expect(err).NotTo(HaveOccurred())
-			Expect(partition).To(Equal(int32(0)))
+			Expect(partitionID).To(Equal(int32(0)))
 			num, _ := subject.Offset(0)
 			Expect(num).To(Equal(p0))
 
-			err = subject.Checkout(func(c *PartitionConsumer) error { partition = c.partition; return DiscardCommit })
+			err = subject.Checkout(func(c *PartitionConsumer) error { partitionID = c.partitionID; return DiscardCommit })
 			Expect(err).NotTo(HaveOccurred())
-			Expect(partition).To(Equal(int32(1)))
+			Expect(partitionID).To(Equal(int32(1)))
 			num, _ = subject.Offset(1)
 			Expect(num).To(Equal(p1))
 		})
@@ -231,17 +231,26 @@ var _ = Describe("ConsumerGroup", func() {
 				go fuzzingTest("B", 100, errors, events)
 				Eventually(func() int { return len(events) }, "20s").Should(BeNumerically(">", 500))
 
-				go fuzzingTest("C", 9000, errors, events)
-				go fuzzingTest("D", 1000, errors, events)
-				go fuzzingTest("E", 6000, errors, events)
-				go fuzzingTest("F", 2000, errors, events)
-				go fuzzingTest("G", 4000, errors, events)
-				Eventually(func() int { return len(events) }, "40s").Should(BeNumerically(">", 4000))
+				go fuzzingTest("C", 600, errors, events)
+				go fuzzingTest("D", 700, errors, events)
+				go fuzzingTest("E", 800, errors, events)
+				go fuzzingTest("F", 900, errors, events)
+				go fuzzingTest("G", 1000, errors, events)
+				go fuzzingTest("H", 1200, errors, events)
+				go fuzzingTest("I", 1400, errors, events)
+				go fuzzingTest("J", 2000, errors, events)
+				Eventually(func() int { return len(events) }, "20s").Should(BeNumerically(">", 1000))
 
-				go fuzzingTest("H", 10000, errors, events)
-				go fuzzingTest("I", 10000, errors, events)
-				Eventually(func() int { return len(events) }, "120s").Should(BeNumerically(">=", 10000))
-				Eventually(func() int { return len(errors) }, "10s").Should(Equal(9))
+				go fuzzingTest("K", 9000, errors, events)
+				go fuzzingTest("L", 3000, errors, events)
+				go fuzzingTest("M", 6000, errors, events)
+				go fuzzingTest("N", 5000, errors, events)
+				go fuzzingTest("O", 10000, errors, events)
+				Eventually(func() int { return len(events) }, "40s").Should(BeNumerically(">", 5000))
+
+				go fuzzingTest("P", 10000, errors, events)
+				Eventually(func() int { return len(events) }, "60s").Should(BeNumerically(">=", 10000))
+				Eventually(func() int { return len(errors) }, "10s").Should(Equal(16))
 
 				for len(errors) > 0 {
 					Expect(<-errors).NotTo(HaveOccurred())
@@ -295,7 +304,8 @@ func fuzzingTest(origin string, n int, errors chan error, events chan *fuzzingEv
 	}
 	defer zk.Close()
 
-	// notifier := LogNotifier{log.New(os.Stdout, "["+origin+"] ", 0)}
+	// logger := log.New(os.Stdout, "["+origin+"] ", 0)
+	// notifier := LogNotifier{logger}
 	group, err := NewConsumerGroup(client, zk, "sarama-cluster-fuzzing-test", t_TOPIC, nil, testConsumerConfig())
 	if err != nil {
 		errors <- err

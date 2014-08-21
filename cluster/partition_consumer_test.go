@@ -12,7 +12,7 @@ var _ = Describe("PartitionConsumer", func() {
 
 	BeforeEach(func() {
 		stream = newMockStream()
-		subject = &PartitionConsumer{partition: 3, topic: t_TOPIC, stream: stream}
+		subject = &PartitionConsumer{partitionID: 3, topic: t_TOPIC, stream: stream}
 	})
 
 	It("should fetch batches of events (if available)", func() {

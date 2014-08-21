@@ -41,7 +41,7 @@ type ConsumerGroup struct {
 	claimed  chan *PartitionConsumer
 	notify   Notifier
 
-	checkout, force, stopper, done chan bool
+	checkout, checkin, force, stopper, done chan bool
 }
 
 // NewConsumerGroup creates a new consumer group for a given topic.
@@ -86,6 +86,7 @@ func NewConsumerGroup(client *sarama.Client, zoo *ZK, name string, topic string,
 		stopper:  make(chan bool),
 		done:     make(chan bool),
 		checkout: make(chan bool),
+		checkin:  make(chan bool),
 		force:    make(chan bool),
 		claimed:  make(chan *PartitionConsumer),
 	}
@@ -117,6 +118,7 @@ func (cg *ConsumerGroup) Topic() string {
 func (cg *ConsumerGroup) Checkout(callback func(*PartitionConsumer) error) error {
 	cg.checkout <- true
 	claimed := <-cg.claimed
+	defer func() { cg.checkin <- true }()
 
 	if claimed == nil {
 		return NoCheckout
@@ -126,7 +128,7 @@ func (cg *ConsumerGroup) Checkout(callback func(*PartitionConsumer) error) error
 	if err == DiscardCommit {
 		err = nil
 	} else if err == nil && claimed.offset > 0 {
-		err = cg.Commit(claimed.partition, claimed.offset+1)
+		err = cg.Commit(claimed.partitionID, claimed.offset+1)
 	}
 	return err
 }
@@ -142,25 +144,25 @@ func (cg *ConsumerGroup) Process(callback func(*EventBatch) error) error {
 
 			// Try to reset offset on OffsetOutOfRange errors
 			if batch.offsetIsOutOfRange() {
-				cur, err := cg.Offset(pc.partition)
+				cur, err := cg.Offset(pc.partitionID)
 				if err != nil {
 					return err
 				}
 
-				min, err := cg.client.GetOffset(cg.topic, pc.partition, sarama.EarliestOffset)
+				min, err := cg.client.GetOffset(cg.topic, pc.partitionID, sarama.EarliestOffset)
 				if err != nil {
 					return err
 				}
 
 				if cur < min {
-					if err := cg.Commit(pc.partition, min); err != nil {
+					if err := cg.Commit(pc.partitionID, min); err != nil {
 						return err
 					}
 				}
 
 				cg.releaseClaims()
 				cg.force <- true
-				return fmt.Errorf("kafka: The requested offset is outside the range of offsets maintained by the server for %s-%d, current: %d, min: %d.", cg.topic, pc.partition, cur, min)
+				return fmt.Errorf("kafka: The requested offset is outside the range of offsets maintained by the server for %s-%d, current: %d, min: %d.", cg.topic, pc.partitionID, cur, min)
 			}
 
 			return callback(batch)
@@ -170,20 +172,20 @@ func (cg *ConsumerGroup) Process(callback func(*EventBatch) error) error {
 }
 
 // Commit manually commits an offset for a partition
-func (cg *ConsumerGroup) Commit(partition int32, offset int64) error {
-	return cg.zoo.Commit(cg.name, cg.topic, partition, offset)
+func (cg *ConsumerGroup) Commit(partitionID int32, offset int64) error {
+	return cg.zoo.Commit(cg.name, cg.topic, partitionID, offset)
 }
 
 // Offset manually retrives an offset for a partition
-func (cg *ConsumerGroup) Offset(partition int32) (int64, error) {
-	return cg.zoo.Offset(cg.name, cg.topic, partition)
+func (cg *ConsumerGroup) Offset(partitionID int32) (int64, error) {
+	return cg.zoo.Offset(cg.name, cg.topic, partitionID)
 }
 
 // Claims returns the claimed partitions
 func (cg *ConsumerGroup) Claims() []int32 {
 	res := make([]int32, 0, len(cg.claims))
 	for _, claim := range cg.claims {
-		res = append(res, claim.partition)
+		res = append(res, claim.partitionID)
 	}
 	return res
 }
@@ -228,6 +230,7 @@ func (cg *ConsumerGroup) signalLoop() {
 			cg.zkchange = nil
 		case <-cg.checkout:
 			cg.claimed <- cg.nextConsumer()
+			<-cg.checkin
 		}
 	}
 }
@@ -294,7 +297,7 @@ func (cg *ConsumerGroup) rebalance() (err error) {
 func (cg *ConsumerGroup) makeClaims(cids []string, parts PartitionSlice) error {
 	current := make(map[int32]bool, len(cg.claims))
 	for _, pt := range cg.claims {
-		current[pt.partition] = true
+		current[pt.partitionID] = true
 	}
 
 	future := cg.claimRange(cids, parts)
@@ -308,13 +311,12 @@ func (cg *ConsumerGroup) makeClaims(cids []string, parts PartitionSlice) error {
 
 	cg.releaseClaims()
 	for _, part := range future {
-
-		pc, err := NewPartitionConsumer(cg, part.ID)
+		err := cg.zoo.Claim(cg.name, cg.topic, part.ID, cg.id)
 		if err != nil {
 			return err
 		}
 
-		err = cg.zoo.Claim(cg.name, cg.topic, pc.partition, cg.id)
+		pc, err := NewPartitionConsumer(cg, part.ID)
 		if err != nil {
 			return err
 		}
@@ -347,7 +349,7 @@ func (cg *ConsumerGroup) claimRange(cids []string, parts PartitionSlice) Partiti
 func (cg *ConsumerGroup) releaseClaims() {
 	for _, pc := range cg.claims {
 		pc.Close()
-		cg.zoo.Release(cg.name, cg.topic, pc.partition, cg.id)
+		cg.zoo.Release(cg.name, cg.topic, pc.partitionID, cg.id)
 	}
 	cg.claims = cg.claims[:0]
 }
