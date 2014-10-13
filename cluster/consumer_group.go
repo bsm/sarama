@@ -257,6 +257,12 @@ func (cg *ConsumerGroup) nextConsumer() *PartitionConsumer {
 	return &shift
 }
 
+// ForceRebalance releases all claims and starts a rebalance cycle
+func (cg *ConsumerGroup) ForceRebalance() {
+	cg.releaseClaims()
+	cg.force <- true
+}
+
 // Start a rebalance cycle
 func (cg *ConsumerGroup) rebalance() (err error) {
 	var cids []string
