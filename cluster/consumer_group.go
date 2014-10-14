@@ -7,7 +7,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/ORBAT/sarama"
 	"github.com/samuel/go-zookeeper/zk"
 )
 
@@ -109,6 +109,8 @@ func (cg *ConsumerGroup) Name() string {
 func (cg *ConsumerGroup) Topic() string {
 	return cg.topic
 }
+
+// BUG(ORBAT): Checkout() will fail to commit the offset if the claimed offset was 0
 
 // Checkout applies a callback function to a single partition consumer.
 // The latest consumer offset is automatically comitted to zookeeper if successful.

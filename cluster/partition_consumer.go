@@ -1,6 +1,6 @@
 package cluster
 
-import "github.com/Shopify/sarama"
+import "github.com/ORBAT/sarama"
 
 // EventStream is an abstraction of a sarama.Consumer
 type EventStream interface {
