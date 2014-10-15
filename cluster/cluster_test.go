@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/ORBAT/sarama"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )

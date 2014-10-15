@@ -5,7 +5,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/Shopify/sarama"
+	"github.com/ORBAT/sarama"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
@@ -195,6 +195,41 @@ var _ = Describe("ConsumerGroup", func() {
 
 			now, _ := subject.Offset(0)
 			Expect(now).To(Equal(was + 16))
+		})
+
+		It("should allow forcing a rebalance", func() {
+			was, _ := subject.Offset(0)
+
+			var batch *EventBatch
+			okCount := int64(5)
+
+			err := subject.Process(func(b *EventBatch) error {
+				// here we successfully "process" okCount-1 events out of the batch, but then things go pear-shaped and we're left with a partially processed EventBatch
+				// frob(b)
+				batch = b
+				return mockError
+			})
+
+			Expect(err).To(Equal(mockError))
+			Expect(batch).NotTo(BeNil())
+			Expect(batch.Events).To(HaveLen(16))
+
+			// let's manually commit the offset so that it points to the message our previous Process() errored on
+			cerr := subject.Commit(0, was+okCount)
+			Expect(cerr).NotTo(HaveOccurred())
+			now, _ := subject.Offset(0)
+			Expect(now).To(Equal(was + okCount))
+			subject.ForceRebalance()
+
+			err = subject.Process(func(b *EventBatch) error {
+				Expect(b.Events[0].Offset).To(Equal(int64(was + okCount)))
+				Expect(b.Events[len(b.Events)-1].Offset).To(Equal(was + okCount + int64(len(b.Events)) - 1))
+				return nil // no errors this time, yay!
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			now, _ = subject.Offset(0)
+			Expect(now).To(Equal(was + okCount + 16))
 		})
 
 		It("should skip commits if requested", func() {
