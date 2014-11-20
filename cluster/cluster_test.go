@@ -145,7 +145,7 @@ func seedMessages(count int) error {
 	defer client.Close()
 
 	config := sarama.NewProducerConfig()
-	config.Partitioner = sarama.NewHashPartitioner()
+	config.Partitioner = sarama.NewHashPartitioner
 	producer, err := sarama.NewProducer(client, config)
 	if err != nil {
 		return err
@@ -153,10 +153,7 @@ func seedMessages(count int) error {
 	defer producer.Close()
 
 	for i := 0; i < count; i++ {
-		err := producer.SendMessage(t_TOPIC, nil, sarama.ByteEncoder([]byte(fmt.Sprintf("PLAINDATA-%08d", i))))
-		if err != nil {
-			return err
-		}
+		producer.Input() <- &sarama.MessageToSend{Topic: t_TOPIC, Key: nil, Value: sarama.ByteEncoder([]byte(fmt.Sprintf("PLAINDATA-%08d", i)))}
 	}
 	return nil
 }

@@ -32,42 +32,29 @@ func (b *EventBatch) offsetIsOutOfRange() bool {
 
 // PartitionConsumer can consume a single partition of a single topic
 type PartitionConsumer struct {
-	stream      EventStream
-	topic       string
-	partitionID int32
-	offset      int64
+	stream    EventStream
+	partition int32
+	offset    int64
+	client    *sarama.Client
+	topic     string
+	group     string
+	config    *sarama.ConsumerConfig
 }
 
 // NewPartitionConsumer creates a new partition consumer instance
-func NewPartitionConsumer(group *ConsumerGroup, partition int32) (*PartitionConsumer, error) {
-	config := &sarama.ConsumerConfig{
-		DefaultFetchSize: group.config.DefaultFetchSize,
-		MinFetchSize:     group.config.MinFetchSize,
-		MaxMessageSize:   group.config.MaxMessageSize,
-		MaxWaitTime:      group.config.MaxWaitTime,
-		OffsetMethod:     sarama.OffsetMethodOldest,
-		EventBufferSize:  group.config.EventBufferSize,
+func NewPartitionConsumer(client *sarama.Client, config *sarama.ConsumerConfig, topic, group string, partition int32, offset int64) (*PartitionConsumer, error) {
+	p := &PartitionConsumer{
+		client:    client,
+		config:    config,
+		topic:     topic,
+		group:     group,
+		partition: partition,
 	}
 
-	offset, err := group.Offset(partition)
-	if err != nil {
-		return nil, err
-	} else if offset > 0 {
-		config.OffsetMethod = sarama.OffsetMethodManual
-		config.OffsetValue = offset
-	}
-
-	stream, err := sarama.NewConsumer(group.client, group.topic, partition, group.name, config)
-	if err != nil {
+	if err := p.newStream(offset); err != nil {
 		return nil, err
 	}
-
-	return &PartitionConsumer{
-		stream:      stream,
-		topic:       group.topic,
-		partitionID: partition,
-		offset:      offset,
-	}, nil
+	return p, nil
 }
 
 // Offset returns the current offset
@@ -75,8 +62,13 @@ func (p *PartitionConsumer) Offset() int64 {
 	return p.offset
 }
 
+// Rollback rollbacks stream to given offset
+func (p *PartitionConsumer) Rollback(offset int64) error {
+	return p.newStream(offset)
+}
+
 // Fetch returns a batch of events
-// WARNING: may return nil if not events are available
+// WARNING: may return nil if no events are available
 func (p *PartitionConsumer) Fetch() *EventBatch {
 	events := p.stream.Events()
 	evtlen := len(events)
@@ -86,7 +78,7 @@ func (p *PartitionConsumer) Fetch() *EventBatch {
 
 	batch := &EventBatch{
 		Topic:     p.topic,
-		Partition: p.partitionID,
+		Partition: p.partition,
 		Events:    make([]*sarama.ConsumerEvent, evtlen),
 	}
 	for i := 0; i < evtlen; i++ {
@@ -104,4 +96,18 @@ func (p *PartitionConsumer) Fetch() *EventBatch {
 // Close closes a partition consumer
 func (p *PartitionConsumer) Close() error {
 	return p.stream.Close()
+}
+
+// PRIVATE
+func (p *PartitionConsumer) newStream(offset int64) error {
+	c := *p.config
+	c.OffsetMethod = sarama.OffsetMethodOldest
+	if offset > 0 {
+		c.OffsetMethod = sarama.OffsetMethodManual
+		c.OffsetValue = offset
+	}
+	var err error
+	p.stream, err = sarama.NewConsumer(p.client, p.topic, p.partition, p.group, &c)
+	p.offset = offset
+	return err
 }

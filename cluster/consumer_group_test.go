@@ -14,10 +14,6 @@ var mockError = errors.New("mock: error")
 
 var _ = Describe("ConsumerGroup", func() {
 
-	var newCG = func(client *sarama.Client, zk *ZK) (*ConsumerGroup, error) {
-		return NewConsumerGroup(client, zk, t_GROUP, t_TOPIC, testState.notifier, testConsumerConfig())
-	}
-
 	It("should determine which partitions to claim", func() {
 		testCases := []struct {
 			id   string
@@ -109,6 +105,15 @@ var _ = Describe("ConsumerGroup", func() {
 				subject.Close()
 				subject = nil
 			}
+			if zk != nil {
+				zk.DeleteAll("/")
+				zk.Close()
+				zk = nil
+			}
+			if client != nil {
+				client.Close()
+				subject = nil
+			}
 		})
 
 		It("can be created & closed", func() {
@@ -166,19 +171,19 @@ var _ = Describe("ConsumerGroup", func() {
 		})
 
 		It("should checkout individual consumers", func() {
-			partitionID := int32(-1)
+			partition := int32(-1)
 			p0, _ := subject.Offset(0)
 			p1, _ := subject.Offset(1)
 
-			err := subject.Checkout(func(c *PartitionConsumer) error { partitionID = c.partitionID; return DiscardCommit })
+			err := subject.Checkout(func(c *PartitionConsumer) error { partition = c.partition; return DiscardCommit })
 			Expect(err).NotTo(HaveOccurred())
-			Expect(partitionID).To(Equal(int32(0)))
+			Expect(partition).To(Equal(int32(0)))
 			num, _ := subject.Offset(0)
 			Expect(num).To(Equal(p0))
 
-			err = subject.Checkout(func(c *PartitionConsumer) error { partitionID = c.partitionID; return DiscardCommit })
+			err = subject.Checkout(func(c *PartitionConsumer) error { partition = c.partition; return DiscardCommit })
 			Expect(err).NotTo(HaveOccurred())
-			Expect(partitionID).To(Equal(int32(1)))
+			Expect(partition).To(Equal(int32(1)))
 			num, _ = subject.Offset(1)
 			Expect(num).To(Equal(p1))
 		})
@@ -200,6 +205,17 @@ var _ = Describe("ConsumerGroup", func() {
 		It("should skip commits if requested", func() {
 			was, _ := subject.Offset(0)
 			err := subject.Process(func(b *EventBatch) error { return DiscardCommit })
+			Expect(err).NotTo(HaveOccurred())
+
+			now, _ := subject.Offset(0)
+			Expect(now).To(Equal(was))
+		})
+
+		It("should rewind checkout if requested", func() {
+			was, _ := subject.Offset(0)
+			err := subject.Process(func(b *EventBatch) error {
+				return RollbackCheckout
+			})
 			Expect(err).NotTo(HaveOccurred())
 
 			now, _ := subject.Offset(0)
@@ -279,6 +295,10 @@ var _ = Describe("ConsumerGroup", func() {
 /*******************************************************************
  * TEST HELPERS
  *******************************************************************/
+
+func newCG(client *sarama.Client, zk *ZK) (*ConsumerGroup, error) {
+	return NewConsumerGroup(client, zk, t_GROUP, t_TOPIC, testState.notifier, testConsumerConfig())
+}
 
 type fuzzingEvent struct {
 	Origin            string

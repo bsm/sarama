@@ -7,42 +7,66 @@ import (
 )
 
 var _ = Describe("PartitionConsumer", func() {
+	var client *sarama.Client
 	var subject *PartitionConsumer
-	var stream *mockStream
 
 	BeforeEach(func() {
-		stream = newMockStream()
-		subject = &PartitionConsumer{partitionID: 3, topic: t_TOPIC, stream: stream}
+		var err error
+
+		client, err = newClient()
+		Expect(err).NotTo(HaveOccurred())
+		subject, err = NewPartitionConsumer(client, testConsumerConfig(), t_TOPIC, t_GROUP, 3, 0)
+		Expect(err).NotTo(HaveOccurred())
+
 	})
 
-	It("should fetch batches of events (if available)", func() {
-		Expect(subject.Fetch()).To(BeNil())
-		stream.events <- &sarama.ConsumerEvent{}
-		stream.events <- &sarama.ConsumerEvent{}
+	AfterEach(func() {
+		if subject != nil {
+			subject.Close()
+			subject = nil
+		}
+		if client != nil {
+			client.Close()
+			subject = nil
+		}
+	})
+
+	nextBatch := func() *EventBatch {
+		Eventually(func() int { return len(subject.stream.Events()) }).Should(BeNumerically(">", 10))
 		batch := subject.Fetch()
 		Expect(batch).NotTo(BeNil())
+		return batch
+	}
+
+	It("should fetch batches of events", func() {
+		batch := nextBatch()
 		Expect(batch.Topic).To(Equal(t_TOPIC))
 		Expect(batch.Partition).To(Equal(int32(3)))
-		Expect(batch.Events).To(HaveLen(2))
-		Expect(subject.Fetch()).To(BeNil())
+		Expect(len(batch.Events)).To(BeNumerically(">", 10))
 	})
 
-	It("should close consumers", func() {
+	It("should rollback to given offset", func() {
+		// Consume something to get real offset
+		nextBatch()
+
+		// Consume the batch to be rolled back to
+		was := subject.Offset()
+		Expect(was).To(BeNumerically(">", 0))
+		b2 := nextBatch()
+		Expect(b2.Events[0].Offset).To(Equal(was + 1))
+
+		// Rollback
+		subject.Rollback(was)
+		Expect(subject.Offset()).To(Equal(was))
+
+		// Confirm consumption starts from previous offset
+		b3 := nextBatch()
+		Expect(b3.Events[0].Offset).To(Equal(was))
+	})
+
+	It("should close consumer", func() {
 		Expect(subject.Close()).To(BeNil())
-		Expect(stream.closed).To(BeTrue())
+		subject = nil
 	})
 
 })
-
-/********************************************************************
- * TEST HOOK
- *********************************************************************/
-
-type mockStream struct {
-	closed bool
-	events chan *sarama.ConsumerEvent
-}
-
-func newMockStream() *mockStream                           { return &mockStream{events: make(chan *sarama.ConsumerEvent, 1000)} }
-func (m *mockStream) Events() <-chan *sarama.ConsumerEvent { return m.events }
-func (m *mockStream) Close() error                         { m.closed = true; return nil }
